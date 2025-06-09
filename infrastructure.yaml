@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Infrastructure for Crypto Price Data Pipeline'
+
+Parameters:
+  LambdaFunctionName:
+    Type: String
+    Default: crypto-price-collector
+    Description: Name of the Lambda function
+  
+  S3BucketName:
+    Type: String
+    Default: crypto-datalake-01
+    Description: Name of the S3 bucket for storing price data
+
+Resources:
+  # Lambda Function
+  CryptoPriceCollectorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          # Lambda function code will be uploaded separately
+      Runtime: python3.9
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref S3BucketName
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${S3BucketName}
+                  - !Sub arn:aws:s3:::${S3BucketName}/*
+
+  # EventBridge Rule for hourly execution
+  HourlyTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "Trigger Lambda function every hour"
+      ScheduleExpression: "rate(1 hour)"
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CryptoPriceCollectorFunction.Arn
+          Id: "CryptoPriceCollectorTarget"
+
+  # Permission for EventBridge to invoke Lambda
+  EventBridgeInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CryptoPriceCollectorFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt HourlyTriggerRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: "ARN of the Lambda function"
+    Value: !GetAtt CryptoPriceCollectorFunction.Arn
+
+  EventBridgeRuleArn:
+    Description: "ARN of the EventBridge rule"
+    Value: !GetAtt HourlyTriggerRule.Arn 
